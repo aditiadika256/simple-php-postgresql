@@ -1,108 +1,147 @@
 <?php require 'db.php';
-
-print '<pre>'."\n";
-//print_r(gd_info());
 $el_camino = getcwd();
-$F = scandir('.');
+$los_ficheros = Array();
+foreach (scandir('.') as $nombre){
+	if ( is_file($nombre) ) {
+		switch ( substr ( $nombre, strrpos($nombre, '.') ) )
+		{
+			case '.jpeg':
+			case '.jpg':
+			case '.png':
+			case '.gif':
+			case '.bmp':
+				$los_ficheros[$nombre] = Array (
+					'fecha' => date("c", filemtime($nombre)),
+					'largo' => filesize($nombre)
+				); break;
+			default: break;
+		} // end switch;
+	} // end if;
+} // end foreach;
 
-$statement1 = $dbh->prepare( 'CREATE TABLE IF NOT EXISTS
-	imagen (
-		camino		varchar(255),
-		nombre		varchar(255),
-		im		bytea,
-		PRIMARY KEY	(camino, nombre)
-	) WITHOUT OIDS;') or die('failed to prepare SQL statement: error ' . $dbh->errorCode());
-$statement1->execute()
-	or die('failed to execute SQL statement: error '
-	. $statement1->errorCode() );
+
+// CREATE TABLE IF NOT EXISTS
+	$create_table = $dbh->prepare(
+			'CREATE TABLE IF NOT EXISTS '
+			. $my_schema . '.' . $my_table . ' (
+			camino		varchar(255),
+			nombre		varchar(255),
+			fecha		timestamp with time zone,
+			largo		bigint,
+			alt			text,
+			src			bytea,
+			PRIMARY KEY (camino,nombre)
+			) WITHOUT OIDS;')
+	or die('failed to prepare CREATE TABLE: error ' . $dbh->errorCode());
+	$create_table->execute()
+		or die('failed to execute CREATE TABLE: error '
+				. $create_table->errorCode());
+
+
+// VERIFY EXISTING RECORDS IN DATABASE
+	$select = $dbh->prepare('SELECT nombre, camino, fecha, largo
+				FROM '. $my_schema . '.' . $my_table .' WHERE camino = :camino;')
+				or die('failed to prepare SELECT: error ' . $dbh->errorCode());
+
+	$select->bindParam(':camino', $el_camino);
+
+	$select->execute() or die('failed to execute SELECT: error ' . $select->errorCode() );
+
+	$D = Array(); // records to be deleted
+	$O = Array(); // records to be preserved
+
+	foreach($select->fetchAll() as $record){
+		if (!array_key_exists($record['nombre'], $los_ficheros))
+		{
+			$D[$record['nombre']] = 1;
+		}
+		elseif ((new DateTime($record['fecha']))
+					->diff(new DateTime($los_ficheros[$record['nombre']]['fecha']))
+						== new DateInterval("PT0S")
+			&&	$record['largo'] == $los_ficheros[$record['nombre']]['largo'] )
+		{
+			$O[$record['nombre']] = 1;
+		}
+	}
+
 	
-	
-$statement2 = $dbh->prepare('SELECT (nombre) FROM imagen WHERE camino = :c;')
-	or die('failed to prepare SQL SELECT statement: error ' . $dbh->errorCode());
-$statement2->bindParam(':c', $el_camino);
-echo $el_camino . "\n";
-$statement2->execute() or die('failed to execute SQL SELECT statement: error ' . $statement2->errorCode() );
+// DELETE OLD RECORDS FROM DATABASE	
+	$delete_old = $dbh->prepare("DELETE FROM ".$my_schema.".".$my_table
+		. " WHERE camino = :camino AND nombre = :nombre;")
+		or die ('failed to prepare DELETE: error ' . $dbh->errorCode());
+	$delete_old->bindParam(':camino', $el_camino);
+	foreach ($D as $nombre => $b){
+		$delete_old->bindParam(':nombre', $nombre);
+		$delete_old->execute() or die ('failed to execute DELETE: error '
+		. $delete_old->errorCode());
+	} // end foreach;
 
-$file_list_d = Array();
-while($record = $statement2->fetch()){
-	$file_list_d[] = $record['nombre'];
-}
 
-$file_list_f = Array();
-foreach($F as $f){
-	$ext = substr($f, strrpos($f, '.'));
-	switch ($ext){
-		case '.jpeg':
-		case '.jpg':
-		case '.png':
-		case '.gif':
-		case '.bmp':
-			$file_list_f[]=$f; break;
-		default:
-			continue;
+// UPDATE DATABASE WITH NEW RECORDS
+	$transaction = $dbh->prepare(
+		"INSERT INTO ".$my_schema.".".$my_table." (camino, nombre, fecha, largo, alt, src)"
+		. " VALUES (:camino, :nombre, :fecha, :largo, :alt, decode(:src_64, 'base64'))"
+		. " ON CONFLICT ON CONSTRAINT ".$my_table."_pkey DO UPDATE SET (fecha, largo, alt, src)"
+		. " = (:fecha, :largo, :alt, decode(:src_64, 'base64'));"
+)
+		or die('failed to prepare TRANSACTION: error ' . $transaction->errorCode());
+	$transaction->bindParam(':camino', $el_camino);
+	foreach ($los_ficheros as $nombre => $A) {
+		if(array_key_exists($nombre, $O))
+			continue; // record is good and does not need to be updated
+		switch ( substr($nombre, strrpos($nombre, '.')) ) {
+			case '.jpeg':
+			case '.jpg': $im = imagecreatefromjpeg($nombre); break;
+			case '.png': $im = imagecreatefrompng($nombre); break;
+			case '.gif': $im = imagecreatefromgif($nombre); break;
+			case '.bmp': $im = imagecreatefromwbmp($nombre); break;
+			default: die('could not create image: unknown type: ' . $nombre);
+		} // end switch;
+		$size0 = getimagesize($nombre);
+		$ratio = min(120/max(120,$size0[0]), 120/max(120,$size0[1]));
+		$jm = imagescale($im, $ratio*$size0[0], $ratio*$size0[1]);
+		imagedestroy($im);
+
+		// START BUFFERING OUTPUT AND GENERATE THUMBNAIL IMAGE
+		ob_start(NULL, 0, PHP_OUTPUT_HANDLER_CLEANABLE|PHP_OUTPUT_HANDLER_REMOVABLE )
+			or die ('failed to start output buffer');
+		switch ( substr($nombre, strrpos($nombre, '.')) ){
+			case '.jpeg':
+			case '.jpg': imagejpeg($jm); imagedestroy($jm); break;
+			case '.png': imagepng($jm); imagedestroy($jm); break;
+			case '.gif': imagegif($jm); imagedestroy($jm); break;
+			case '.bmp': imagewbmp($jm); imagedestroy($jm); break;
+			default: die('could not write image data: unknown type: ' . $nombre);
+		} //end switch;
+
+		// GET IMAGE CONTENT AND END BUFFERING OUTPUT
+		$l = ob_get_length();
+		$src = ob_get_clean();
+		$src_64 = base64_encode($src);
+	    $transaction->bindParam(':nombre', $nombre);
+		$transaction->bindParam(':fecha', $A['fecha']);
+		$transaction->bindParam(':largo', $A['largo']);
+		$transaction->bindParam(':alt', $nombre);
+		$transaction->bindParam(':src_64', $src_64);
+		$transaction->execute()
+		or die('failed to execute TRANSACTION: error '
+		. $transaction->errorCode());
+	} // end foreach;
+?><html>
+<head>
+  <meta charset="utf-8" />
+  <title><?php echo htmlentities(urldecode($_SERVER['REQUEST_URI'])); ?></title>
+  <meta name="description" content="las imágenes" />
+  <meta name="author" content="i.php" />
+<!-- IE -->
+<link rel="shortcut icon" type="image/vnd.microsoft.icon" href="/favicon.ico" />
+<!-- other browsers -->
+<link rel="icon" type="image/x-icon" href="/favicon.ico" />
+</head><body>
+<h1><?php echo htmlentities(urldecode($_SERVER['REQUEST_URI'])); ?></h1>
+<p><?php
+	foreach($los_ficheros as $nombre => $A){
+		print " <a href='".urlencode($nombre)."'><img alt='".urlencode($nombre)."' src='i.php?f=".urlencode($nombre)."' /></a>";
 	}
-}
-
-$file_list_n = Array();
-foreach($file_list_f as $f){
-	if (is_array($file_list_d) && !in_array($f, $file_list_d)){
-		$file_list_n[]=$f;
-	}
-}
-echo '</pre><p>';
-foreach ($file_list_f as $f) {
-	echo ' <a href="'.$f.'"><img src="i.php?f='.$f.'" alt="'.$f.'" /></a> ';
-}
-echo '</p><pre>';
-/*
-echo '$file_list_d == '; print_r($file_list_d);
-echo "\n";
-echo '$file_list_f == '; print_r($file_list_f);
-echo "\n";
-echo '$file_list_n == '; print_r($file_list_n);
- */
-$statement3 = $dbh->prepare(
-	'INSERT INTO imagen (camino, nombre, im) VALUES (:c, :n, decode(:i, \'base64\'));')
-	or die('failed to prepare SQL INSERT statement: error ' . $statement->errorCode());
-
-
-foreach ($file_list_n as $new) {
-	$ext = substr($new, strrpos($new, '.'));
-	print $new . ' ' . $ext . ' ';
-	switch ($ext) {
-		case '.jpeg':
-		case '.jpg': $im = imagecreatefromjpeg($el_camino.'/'.$new); break;
-		case '.png': $im = imagecreatefrompng($el_camino.'/'.$new); break;
-		case '.gif': $im = imagecreatefromgif($el_camino.'/'.$new); break;
-		case '.bmp': $im = imagecreatefrombmp($el_camino.'/'.$new); break;
-		default: die('could not create image: unknown image filetype: ' . $ext);
-	}
-	$size0 = getimagesize($el_camino.'/'.$new); // width x height etc.
-	print_r($size0);
-	$ratio = min(120/max(120,$size0[0]), 120/max(120,$size0[1]));
-	$jm = imagescale ($im, $ratio*$size0[0], $ratio*$size0[1]);
-	imagedestroy($im);
-	ob_start();
-	switch ($ext){
-		case '.jpeg':
-		case '.jpg': imagejpeg($jm); break;
-		case '.png': imagepng($jm); break;
-		case '.gif': imagegif($jm); break;
-		case '.bmp': imagebmp($jm); break;
-		default: die('could not write image data: unknown type: ' . $ext);
-	}
-	$km = base64_encode(ob_get_contents());
-	ob_end_clean();
-	if (!isset($km) || !$km) die($el_camino.'/'.$new.': could not write image data: no output');
-	$lm = strlen($km);
-	print 'write ' . $lm . ' ' . ($lm==1 ? 'byte' : 'bytes') . "\n";
-	imagedestroy($jm);
-	$statement3->bindParam(':c', $el_camino);
-        $statement3->bindParam(':n', $new);
-        $statement3->bindParam(':i', $km);
-	$statement3->execute()
-		or die('failed to execute SQL INSERT statement: error '
-		. $statement3->errorCode() . '(' . $el_camino . ', ' . $new . ', ' . strlen($km_64) . 'b)');
-}
-
-echo '</pre>'."\n";
+?></p>
+</body></html>
