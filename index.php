@@ -3,7 +3,7 @@ $el_camino = getcwd();
 $los_ficheros = Array();
 foreach (scandir('.') as $nombre){
 	if ( is_file($nombre) ) {
-		switch ( substr ( $nombre, strrpos($nombre, '.') ) )
+		switch (strtolower(substr($nombre, strrpos($nombre, '.'))))
 		{
 			case '.jpeg':
 			case '.jpg':
@@ -89,7 +89,7 @@ foreach (scandir('.') as $nombre){
 	foreach ($los_ficheros as $nombre => $A) {
 		if(array_key_exists($nombre, $O))
 			continue; // record is good and does not need to be updated
-		switch ( substr($nombre, strrpos($nombre, '.')) ) {
+		switch (strtolower(substr($nombre, strrpos($nombre, '.')))) {
 			case '.jpeg':
 			case '.jpg': $im = imagecreatefromjpeg($nombre); break;
 			case '.png': $im = imagecreatefrompng($nombre); break;
@@ -103,19 +103,19 @@ foreach (scandir('.') as $nombre){
 		imagedestroy($im);
 
 		// START BUFFERING OUTPUT AND GENERATE THUMBNAIL IMAGE
-		ob_start(NULL, 0, PHP_OUTPUT_HANDLER_CLEANABLE|PHP_OUTPUT_HANDLER_REMOVABLE )
-			or die ('failed to start output buffer');
-		switch ( substr($nombre, strrpos($nombre, '.')) ){
+		ob_start(NULL, 0, PHP_OUTPUT_HANDLER_CLEANABLE|PHP_OUTPUT_HANDLER_REMOVABLE)
+			or die ('failed to start buffering output');
+		// "@" -- silence all error messages while output is buffered
+		switch (@strtolower(@substr($nombre, @strrpos($nombre, '.')))){
 			case '.jpeg':
-			case '.jpg': imagejpeg($jm); imagedestroy($jm); break;
-			case '.png': imagepng($jm); imagedestroy($jm); break;
-			case '.gif': imagegif($jm); imagedestroy($jm); break;
-			case '.bmp': imagewbmp($jm); imagedestroy($jm); break;
-			default: die('could not write image data: unknown type: ' . $nombre);
+			case '.jpg': @imagejpeg($jm) || @imagejpeg(@imagecreatetruecolor(50,50)); @imagedestroy($jm); break;
+			case '.png': @imagepng($jm) || @imagepng(@imagecreatetruecolor(50,50)); @imagedestroy($jm); break;
+			case '.gif': @imagegif($jm) || @imagegif(@imagecreatetruecolor(50,50)); @imagedestroy($jm); break;
+			case '.bmp': @imagewbmp($jm) || @imagewbmp(@imagecreatetruecolor(50,50)); @imagedestroy($jm); break;
+			default: break;
 		} //end switch;
 
-		// GET IMAGE CONTENT AND END BUFFERING OUTPUT
-		$l = ob_get_length();
+		// SAVE IMAGE CONTENT, CLEAN OUTPUT BUFFER, AND STOP BUFFERING OUTPUT
 		$src = ob_get_clean();
 		$src_64 = base64_encode($src);
 	    $transaction->bindParam(':nombre', $nombre);
@@ -127,10 +127,11 @@ foreach (scandir('.') as $nombre){
 		or die('failed to execute TRANSACTION: error '
 		. $transaction->errorCode());
 	} // end foreach;
+	$h1title = htmlspecialchars(urldecode(substr($_SERVER['REQUEST_URI'], 0, strrpos($_SERVER['REQUEST_URI'], "/") + 1)));
 ?><html>
 <head>
   <meta charset="utf-8" />
-  <title><?php echo htmlentities(urldecode($_SERVER['REQUEST_URI'])); ?></title>
+  <title><?php print $h1title; ?></title>
   <meta name="description" content="las imágenes" />
   <meta name="author" content="i.php" />
 <!-- IE -->
@@ -138,10 +139,10 @@ foreach (scandir('.') as $nombre){
 <!-- other browsers -->
 <link rel="icon" type="image/x-icon" href="/favicon.ico" />
 </head><body>
-<h1><?php echo htmlentities(urldecode($_SERVER['REQUEST_URI'])); ?></h1>
+<h1><?php print $h1title; ?></h1>
 <p><?php
 	foreach($los_ficheros as $nombre => $A){
-		print " <a href='".urlencode($nombre)."'><img alt='".urlencode($nombre)."' src='i.php?f=".urlencode($nombre)."' /></a>";
+		print " <a href='".urlencode($nombre)."'><img alt='".htmlspecialchars($nombre)."' title='".htmlspecialchars($nombre)."' src='i.php?i=".urlencode($nombre)."' /></a>";
 	}
 ?></p>
 </body></html>
