@@ -94,7 +94,7 @@ foreach (scandir('.') as $nombre){
 			case '.jpg': $im = imagecreatefromjpeg($nombre); break;
 			case '.png': $im = imagecreatefrompng($nombre); break;
 			case '.gif': $im = imagecreatefromgif($nombre); break;
-			case '.bmp': $im = imagecreatefromwbmp($nombre); break;
+			case '.bmp': $im = imagecreatefrombmp($nombre); break;
 			default: die('could not create image: unknown type: ' . $nombre);
 		} // end switch;
 		$size0 = getimagesize($nombre);
@@ -111,13 +111,12 @@ foreach (scandir('.') as $nombre){
 			case '.jpg': @imagejpeg($jm) || @imagejpeg(@imagecreatetruecolor(50,50)); @imagedestroy($jm); break;
 			case '.png': @imagepng($jm) || @imagepng(@imagecreatetruecolor(50,50)); @imagedestroy($jm); break;
 			case '.gif': @imagegif($jm) || @imagegif(@imagecreatetruecolor(50,50)); @imagedestroy($jm); break;
-			case '.bmp': @imagewbmp($jm) || @imagewbmp(@imagecreatetruecolor(50,50)); @imagedestroy($jm); break;
+			case '.bmp': @imagebmp($jm) || @imagebmp(@imagecreatetruecolor(50,50)); @imagedestroy($jm); break;
 			default: break;
 		} //end switch;
 
 		// SAVE IMAGE CONTENT, CLEAN OUTPUT BUFFER, AND STOP BUFFERING OUTPUT
-		$src = ob_get_clean();
-		$src_64 = base64_encode($src);
+		$src = ob_get_clean(); $src_64 = base64_encode($src);
 	    $transaction->bindParam(':nombre', $nombre);
 		$transaction->bindParam(':fecha', $A['fecha']);
 		$transaction->bindParam(':largo', $A['largo']);
@@ -142,7 +141,7 @@ foreach (scandir('.') as $nombre){
 <h1><?php print $h1title; ?></h1>
 <p><?php
 	foreach($los_ficheros as $nombre => $A){
-		print " <a href='".urlencode($nombre)."'><img alt='".htmlspecialchars($nombre)."' title='".htmlspecialchars($nombre)."' src='i.php?i=".urlencode($nombre)."' /></a>";
+		print " <a href='".urlencode($nombre)."'><img alt='".htmlspecialchars($nombre)."' title='".htmlspecialchars($nombre." [".$A['fecha']."] (". $A['largo'].")")."' src='i.php?i=".urlencode($nombre)."' /></a>";
 	}
 ?></p>
 </body></html>
